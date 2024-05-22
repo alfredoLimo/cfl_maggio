@@ -13,7 +13,7 @@ def load_full_datasets(
     Load datasets into four separate parts: train labels, train images, test labels, test images.
 
     Args:
-        dataset_name (str): Name of the dataset to load. Options are "MNIST", "FMNIST", "EMNIST", "CIFAR-10", "CIFAR-100".
+        dataset_name (str): Name of the dataset to load. Options are "MNIST", "FMNIST", "EMNIST", "CIFAR10", "CIFAR100".
 
     TODO: EMNIST IS NOT WELL.
 
@@ -45,10 +45,10 @@ def load_full_datasets(
                                             transforms.ToTensor()
                                             ])
                                         )         
-    elif dataset_name == "CIFAR-10":
+    elif dataset_name == "CIFAR10":
         train_dataset = datasets.CIFAR10(root='./data', train=True, download=True, transform=transform)
         test_dataset = datasets.CIFAR10(root='./data', train=False, download=True, transform=transform)
-    elif dataset_name == "CIFAR-100":
+    elif dataset_name == "CIFAR100":
         train_dataset = datasets.CIFAR100(root='./data', train=True, download=True, transform=transform)
         test_dataset = datasets.CIFAR100(root='./data', train=False, download=True, transform=transform)
     else:
@@ -58,7 +58,7 @@ def load_full_datasets(
     train_images = torch.stack([data[0] for data in train_dataset]).squeeze(1)
     test_images = torch.stack([data[0] for data in test_dataset]).squeeze(1)
     
-    if dataset_name in ["CIFAR-10", "CIFAR-100"]:
+    if dataset_name in ["CIFAR10", "CIFAR100"]:
         train_labels = torch.tensor(train_dataset.targets).clone().detach()
         test_labels = torch.tensor(test_dataset.targets).clone().detach()
     else:
