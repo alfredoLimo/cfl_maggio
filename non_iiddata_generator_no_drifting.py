@@ -433,7 +433,7 @@ def split_feature_skew(
     rearranged_data = []
 
     # Iterate through the indices of the lists
-    for i in range(len(basic_split_data_train)):
+    for i in range(client_number):
         # Create a new dictionary for each client
         client_data = {
             'train_features': basic_split_data_train[i]['features'],
