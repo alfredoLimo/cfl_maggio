@@ -349,10 +349,12 @@ def split_feature_skew(
     client_number: int = 10,
     set_rotation: bool = False,
     rotations: int = None,
-    scaling_rotation: float = 0.1,
+    scaling_rotation_low: float = 0.1,
+    scaling_rotation_high: float = 0.1,
     set_color: bool = False,
     colors: int = None,
-    scaling_color: float = 0.1,
+    scaling_color_low: float = 0.1,
+    scaling_color_high: float = 0.1,
     random_order: bool = True,
 ) -> list:
     '''
@@ -366,10 +368,12 @@ def split_feature_skew(
         client_number (int): The number of clients to split the data into.
         set_rotation (bool): Whether to assign rotations to the features.
         rotations (int): The number of possible rotations. Recommended to be [2,4].
-        scaling_rotation (float): The scaling factor for the softmax distribution.
+        scaling_rotation_low (float): The low bound scaling factor of rotation for the softmax distribution.
+        scaling_rotation_high (float): The high bound scaling factor of rotation for the softmax distribution.
         set_color (bool): Whether to assign colors to the features.
-        colors (int): The number of colors to assign. Must be 2 or 3.
-        scaling_color (float): The scaling factor for the softmax distribution.
+        colors (int): The number of colors to assign. Must be [2,3].
+        scaling_color_low (float): The low bound scaling factor of color for the softmax distribution.
+        scaling_color_high (float): The high bound scaling factor of color for the softmax distribution.
         random_order (bool): Whether to shuffle the order of the rotations and colors.
 
     Warning:
@@ -382,6 +386,8 @@ def split_feature_skew(
     # Ensure the features and labels have the same number of samples
     assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
     assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    assert scaling_color_high >= scaling_color_low, "High scaling must be larger than low scaling."
+    assert scaling_rotation_high >= scaling_rotation_low, "High scaling must be larger than low scaling."
 
     # generate basic split
     basic_split_data_train = split_basic(train_features, train_labels, client_number)
@@ -394,7 +400,8 @@ def split_feature_skew(
             len_train = len(client_data_train['labels'])
             len_test = len(client_data_test['labels'])
             total_rotations = assigning_rotation_features(
-                len_train + len_test, rotations, scaling_rotation, random_order
+                len_train + len_test, rotations, 
+                np.random.uniform(scaling_rotation_low,scaling_rotation_high), random_order
                 )
             # Split the total_rotations list into train and test
             train_rotations = total_rotations[:len_train]
@@ -403,14 +410,14 @@ def split_feature_skew(
             client_data_train['features'] = rotate_dataset(client_data_train['features'], train_rotations)
             client_data_test['features'] = rotate_dataset(client_data_test['features'], test_rotations)
 
-
     if set_color:
         for client_data_train, client_data_test in zip(basic_split_data_train, basic_split_data_test):
 
             len_train = len(client_data_train['labels'])
             len_test = len(client_data_test['labels'])
             total_colors = assigning_color_features(
-                len_train + len_test, colors, scaling_color, random_order
+                len_train + len_test, colors, 
+                np.random.uniform(scaling_color_low,scaling_color_high), random_order
                 )
             # Split the total_colors list into train and test
             train_colors = total_colors[:len_train]
