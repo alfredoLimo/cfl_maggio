@@ -339,6 +339,10 @@ def assigning_color_features(
 
     colors_assigned = np.random.choice(letters, size=datapoint_number, p=probabilities)
 
+    # unique, counts = np.unique(colors_assigned, return_counts=True)
+    # for letter, count in zip(unique, counts):
+    #     print(f'{letter}: {count}')
+
     return colors_assigned
 
 def split_feature_skew(
