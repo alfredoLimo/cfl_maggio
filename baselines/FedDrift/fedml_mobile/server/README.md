@@ -1,0 +1,1 @@
+Architecture: Flask + PyTorch + RabbitMQ

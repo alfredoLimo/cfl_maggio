@@ -1,0 +1,11 @@
+data/fmow/data
+docs/
+__pycache__/
+*.png
+*.log
+wandb/
+data/synthetic*
+fedml_api/model/cv/pretrained/
+*.pth
+*.eps
+*.tar.gz

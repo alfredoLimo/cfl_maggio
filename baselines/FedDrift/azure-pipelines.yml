@@ -1,0 +1,53 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run tests, deploy, and more:
+# https://aka.ms/yaml
+
+trigger:
+- master
+
+pool:
+  vmImage: 'windows-latest'
+
+steps:
+- script: echo Hello, world!
+  displayName: 'Run a one-line script'
+
+- script: |
+    echo Add other tasks to build, test, and deploy your project.
+    echo See https://aka.ms/yaml
+  displayName: 'Run a multi-line script'
+
+- task: ComponentGovernanceComponentDetection@0
+  inputs:
+    scanType: 'LogOnly'
+    verbosity: 'Verbose'
+    alertWarningLevel: 'High'
+- task: CredScan@2
+  inputs:
+    toolMajorVersion: 'V2'
+    outputFormat: sarif
+- task: SdtReport@1
+  inputs:
+    AllTools: true
+    BinSkimBreakOn: 'Error'
+    CodesignValidationBreakOn: 'Error'
+    FxCopBreakOn: 'ErrorAbove'
+    ModernCopBreakOn: 'Error'
+    PoliCheckBreakOn: 'Severity1'
+    RoslynAnalyzersBreakOn: 'Error'
+    SemmleBreakOn: 'Error'
+    TSLintBreakOn: 'Error'
+    ToolLogsNotFoundAction: 'Standard'
+- task: PublishSecurityAnalysisLogs@2
+  inputs:
+    ArtifactName: 'CodeAnalysisLogs'
+    ArtifactType: 'Container'
+    AllTools: true
+    ToolLogsNotFoundAction: 'Standard'
+- task: uploadScanResults@1
+  inputs:
+    areaPathParent: 'kevinhsieh.ContFedML'
+    uploadUrl: 'https://airbuildscan.azurewebsites.net/api/Upload'
+  env:
+    SYSTEM_ACCESSTOKEN: $(System.AccessToken)
