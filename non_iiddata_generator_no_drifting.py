@@ -75,11 +75,11 @@ def rotate_dataset(
     Rotates all images in the dataset by a specified degree.
 
     Args:
-        dataset (torch.Tensor): Input dataset, a tensor of shape (N, H, W) where N is the number of images.
+        dataset (torch.Tensor): Input dataset, a tensor of shape (N, ) where N is the number of images.
         degrees (list) : List of degrees to rotate each image.
 
     Returns:
-        torch.Tensor: The rotated dataset, a tensor of the same shape (N, H, W) as the input.
+        torch.Tensor: The rotated dataset, a tensor of the same shape (N, ) as the input.
     '''
 
     if len(dataset) != len(degrees):
