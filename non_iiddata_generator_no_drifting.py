@@ -1,9 +1,12 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import truncnorm
+from collections import Counter
 
 import torch
 from torchvision import datasets, transforms
+
+
 
 
 def load_full_datasets(
@@ -105,9 +108,9 @@ def rotate_dataset(
     return rotated_dataset
 
 def color_dataset(
-        dataset: torch.Tensor,
-        colors: list
-    ) -> torch.Tensor:
+    dataset: torch.Tensor,
+    colors: list
+) -> torch.Tensor:
     '''
     Colors all images in the dataset by a specified color.
 
@@ -360,6 +363,7 @@ def split_feature_skew(
     scaling_color_low: float = 0.1,
     scaling_color_high: float = 0.1,
     random_order: bool = True,
+    show_distribution: bool = False
 ) -> list:
     '''
     Splits an overall dataset into a specified number of clusters (clients) with ONLY feature skew.
@@ -379,6 +383,7 @@ def split_feature_skew(
         scaling_color_low (float): The low bound scaling factor of color for the softmax distribution.
         scaling_color_high (float): The high bound scaling factor of color for the softmax distribution.
         random_order (bool): Whether to shuffle the order of the rotations and colors.
+        show_distribution (bool): Whether to print the distribution of the assigned features.
 
     Warning:
         random_order should be identical for both training and testing if not DRIFTING.
@@ -407,6 +412,9 @@ def split_feature_skew(
                 len_train + len_test, rotations, 
                 np.random.uniform(scaling_rotation_low,scaling_rotation_high), random_order
                 )
+            
+            print(dict(Counter(total_rotations))) if show_distribution else None
+
             # Split the total_rotations list into train and test
             train_rotations = total_rotations[:len_train]
             test_rotations = total_rotations[len_train:]
@@ -423,6 +431,9 @@ def split_feature_skew(
                 len_train + len_test, colors, 
                 np.random.uniform(scaling_color_low,scaling_color_high), random_order
                 )
+            
+            print(dict(Counter(total_colors))) if show_distribution else None
+
             # Split the total_colors list into train and test
             train_colors = total_colors[:len_train]
             test_colors = total_colors[len_train:]
