@@ -1,10 +1,74 @@
 import matplotlib.pyplot as plt
 import numpy as np
+from collections import Counter
 from scipy.stats import truncnorm
 
 import torch
+import torch.nn.functional as F
 from torchvision import datasets, transforms
 
+# For reproducibility only
+RANDOM_SEED = 42
+torch.manual_seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
+
+def draw_split_statistic(
+    data_list: torch.Tensor,
+    plot_indices = None
+) -> None:
+    '''
+    Print label counts and plot images.
+    
+    Args:
+        data_list (list): A list of dictionaries where each dictionary contains the features and labels for each client.
+                        * Output of split_ fns
+        plot_indices (list): A list of indices to plot the first 100 images for each client.
+
+    Warning:
+        Working for only 10 classes dataset. (EMNIST e CIFAR100 NOT SUPPORTED)
+    '''
+    # Print label counts for each dictionary
+    for i, data in enumerate(data_list):
+        train_labels = data['train_labels']
+        test_labels = data['test_labels']
+        
+        train_label_counts = torch.tensor([train_labels.tolist().count(x) for x in range(10)])
+        test_label_counts = torch.tensor([test_labels.tolist().count(x) for x in range(10)])
+        
+        print(f"Client {i}:")
+        print("Training label counts:", train_label_counts)
+        print("Test label counts:", test_label_counts)
+        print("\n")
+    
+    # If plot_indices is provided, plot the first 100 images with labels for the specified dictionaries
+    if plot_indices:
+        for idx in plot_indices:
+            if idx < len(data_list):
+                data = data_list[idx]
+                train_features = data['train_features']
+                train_labels = data['train_labels']
+                
+                num_images = min(100, train_features.shape[0])
+                fig, axes = plt.subplots(10, 10, figsize=(15, 15))
+                fig.suptitle(f'Dictionary {idx} - First {num_images} Training Images', fontsize=16)
+                
+                for i in range(num_images):
+                    ax = axes[i // 10, i % 10]
+                    image = train_features[i]
+                    
+                    if image.shape[0] == 3:
+                        # For CIFAR (3, H, W) -> (H, W, 3)
+                        image = image.permute(1, 2, 0).numpy()
+                    else:
+                        # For MNIST (1, H, W) -> (H, W)
+                        image = image.squeeze().numpy()
+                    
+                    ax.imshow(image, cmap='gray' if image.ndim == 2 else None)
+                    ax.set_title(train_labels[i].item())
+                    ax.axis('off')
+                
+                plt.tight_layout(rect=[0, 0, 1, 0.96])
+                plt.show()
 
 def load_full_datasets(
     dataset_name: str = "MNIST",
@@ -75,11 +139,11 @@ def rotate_dataset(
     Rotates all images in the dataset by a specified degree.
 
     Args:
-        dataset (torch.Tensor): Input dataset, a tensor of shape (N, H, W) where N is the number of images.
+        dataset (torch.Tensor): Input dataset, a tensor of shape (N, ) where N is the number of images.
         degrees (list) : List of degrees to rotate each image.
 
     Returns:
-        torch.Tensor: The rotated dataset, a tensor of the same shape (N, H, W) as the input.
+        torch.Tensor: The rotated dataset, a tensor of the same shape (N, ) as the input.
     '''
 
     if len(dataset) != len(degrees):
@@ -105,9 +169,9 @@ def rotate_dataset(
     return rotated_dataset
 
 def color_dataset(
-        dataset: torch.Tensor,
-        colors: list
-    ) -> torch.Tensor:
+    dataset: torch.Tensor,
+    colors: list
+) -> torch.Tensor:
     '''
     Colors all images in the dataset by a specified color.
 
@@ -360,6 +424,7 @@ def split_feature_skew(
     scaling_color_low: float = 0.1,
     scaling_color_high: float = 0.1,
     random_order: bool = True,
+    show_distribution: bool = False
 ) -> list:
     '''
     Splits an overall dataset into a specified number of clusters (clients) with ONLY feature skew.
@@ -379,6 +444,7 @@ def split_feature_skew(
         scaling_color_low (float): The low bound scaling factor of color for the softmax distribution.
         scaling_color_high (float): The high bound scaling factor of color for the softmax distribution.
         random_order (bool): Whether to shuffle the order of the rotations and colors.
+        show_distribution (bool): Whether to print the distribution of the assigned features.
 
     Warning:
         random_order should be identical for both training and testing if not DRIFTING.
@@ -407,6 +473,9 @@ def split_feature_skew(
                 len_train + len_test, rotations, 
                 np.random.uniform(scaling_rotation_low,scaling_rotation_high), random_order
                 )
+            
+            print(dict(Counter(total_rotations))) if show_distribution else None
+
             # Split the total_rotations list into train and test
             train_rotations = total_rotations[:len_train]
             test_rotations = total_rotations[len_train:]
@@ -423,6 +492,9 @@ def split_feature_skew(
                 len_train + len_test, colors, 
                 np.random.uniform(scaling_color_low,scaling_color_high), random_order
                 )
+            
+            print(dict(Counter(total_colors))) if show_distribution else None
+
             # Split the total_colors list into train and test
             train_colors = total_colors[:len_train]
             test_colors = total_colors[len_train:]
