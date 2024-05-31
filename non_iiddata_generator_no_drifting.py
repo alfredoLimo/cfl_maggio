@@ -546,10 +546,34 @@ def split_label_skew(
     return rearranged_data
 
 
+def merge_data(data: list) -> list: 
+    '''
+    Merges the data from multiple clients into a single dataset.
 
+    Args:
+        data (list): A list of dictionaries where each dictionary contains the features and labels for each client (output of previous functions).
+    
+    Returns:
+        list: A list of four torch.Tensors containing the training features, training labels, testing features, and testing labels.
+    
+    '''
+    train_features = []
+    train_labels = []
+    test_features = []
+    test_labels = []
+    for client_data in data:
+        train_features.append(client_data['train_features'])
+        train_labels.append(client_data['train_labels'])
+        test_features.append(client_data['test_features'])
+        test_labels.append(client_data['test_labels'])
 
+    # Concatenate all the data
+    train_features = torch.cat(train_features, dim=0)
+    train_labels = torch.cat(train_labels, dim=0)
+    test_features = torch.cat(test_features, dim=0)
+    test_labels = torch.cat(test_labels, dim=0)
 
-
+    return [train_features, train_labels, test_features, test_labels]
 
 
 
