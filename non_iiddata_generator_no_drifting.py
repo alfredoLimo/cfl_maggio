@@ -1,12 +1,16 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import truncnorm
 from collections import Counter
-import torch.nn.functional as F
-
+from scipy.stats import truncnorm
 
 import torch
+import torch.nn.functional as F
 from torchvision import datasets, transforms
+
+# For reproducibility only
+RANDOM_SEED = 42
+torch.manual_seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
 
 def draw_split_statistic(
     data_list: torch.Tensor,
@@ -65,7 +69,6 @@ def draw_split_statistic(
                 
                 plt.tight_layout(rect=[0, 0, 1, 0.96])
                 plt.show()
-
 
 def load_full_datasets(
     dataset_name: str = "MNIST",
