@@ -12,6 +12,37 @@ RANDOM_SEED = 42
 torch.manual_seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 
+def merge_data(
+    data: list
+) -> list:
+    '''
+    Merges the data from multiple clients into a single dataset.
+
+    Args:
+        data (list): A list of dictionaries where each dictionary contains the features and labels for each client (output of previous functions).
+    
+    Returns:
+        list: A list of four torch.Tensors containing the training features, training labels, testing features, and testing labels.
+    
+    '''
+    train_features = []
+    train_labels = []
+    test_features = []
+    test_labels = []
+    for client_data in data:
+        train_features.append(client_data['train_features'])
+        train_labels.append(client_data['train_labels'])
+        test_features.append(client_data['test_features'])
+        test_labels.append(client_data['test_labels'])
+
+    # Concatenate all the data
+    train_features = torch.cat(train_features, dim=0)
+    train_labels = torch.cat(train_labels, dim=0)
+    test_features = torch.cat(test_features, dim=0)
+    test_labels = torch.cat(test_labels, dim=0)
+
+    return [train_features, train_labels, test_features, test_labels]
+
 def draw_split_statistic(
     data_list: torch.Tensor,
     plot_indices = None
@@ -617,36 +648,163 @@ def split_label_skew(
 
     return rearranged_data
 
-def merge_data(
-    data: list
+
+def split_feature_label_skew(
+    train_features: torch.Tensor,
+    train_labels: torch.Tensor,
+    test_features: torch.Tensor,
+    test_labels: torch.Tensor,
+    client_number: int = 10,
+    scaling_label_low: float = 0.4,
+    scaling_label_high: float = 0.6,
+    set_rotation: bool = False,
+    rotations: int = None,
+    scaling_rotation_low: float = 0.1,
+    scaling_rotation_high: float = 0.1,
+    set_color: bool = False,
+    colors: int = None,
+    scaling_color_low: float = 0.1,
+    scaling_color_high: float = 0.1,
+    random_order: bool = True,
+    show_distribution: bool = False
 ) -> list:
     '''
-    Merges the data from multiple clients into a single dataset.
+    Splits an overall dataset into a specified number of clusters (clients) with BOTH feature and label skew.
 
     Args:
-        data (list): A list of dictionaries where each dictionary contains the features and labels for each client (output of previous functions).
+        train_features (torch.Tensor): The training dataset features.
+        train_labels (torch.Tensor): The training dataset labels.
+        test_features (torch.Tensor): The testing dataset features.
+        test_labels (torch.Tensor): The testing dataset labels.
+        client_number (int): The number of clients to split the data into.
+        scaling_label_low (float): The low bound scaling factor of label for the softmax distribution.
+        scaling_label_high (float): The high bound scaling factor of label for the softmax distribution.
+        set_rotation (bool): Whether to assign rotations to the features.
+        rotations (int): The number of possible rotations. Recommended to be [2,4].
+        scaling_rotation_low (float): The low bound scaling factor of rotation for the softmax distribution.
+        scaling_rotation_high (float): The high bound scaling factor of rotation for the softmax distribution.
+        set_color (bool): Whether to assign colors to the features.
+        colors (int): The number of colors to assign. Must be [2,3].
+        scaling_color_low (float): The low bound scaling factor of color for the softmax distribution.
+        scaling_color_high (float): The high bound scaling factor of color for the softmax distribution.
+        random_order (bool): Whether to shuffle the order of the rotations and colors.
+        show_distribution (bool): Whether to print the distribution of the assigned features.
+
+    Warning:
+        This should not be used for building concept drift datasets, though it is unavoidable.
     
     Returns:
-        list: A list of four torch.Tensors containing the training features, training labels, testing features, and testing labels.
-    
+        list: A list of dictionaries where each dictionary contains the features and labels for each client.
+
     '''
-    train_features = []
-    train_labels = []
-    test_features = []
-    test_labels = []
-    for client_data in data:
-        train_features.append(client_data['train_features'])
-        train_labels.append(client_data['train_labels'])
-        test_features.append(client_data['test_features'])
-        test_labels.append(client_data['test_labels'])
 
-    # Concatenate all the data
-    train_features = torch.cat(train_features, dim=0)
-    train_labels = torch.cat(train_labels, dim=0)
-    test_features = torch.cat(test_features, dim=0)
-    test_labels = torch.cat(test_labels, dim=0)
+    def calculate_probabilities(labels, scaling):
+        # Count the occurrences of each label
+        label_counts = torch.bincount(labels, minlength=10).float()
+        scaled_counts = label_counts ** scaling
+        
+        # Apply softmax to get probabilities
+        probabilities = F.softmax(scaled_counts, dim=0)
+        
+        return probabilities
 
-    return [train_features, train_labels, test_features, test_labels]
+    def create_sub_dataset(features, labels, probabilities, num_points):
+        selected_indices = []
+        while len(selected_indices) < num_points:
+            for i in range(len(labels)):
+                if torch.rand(1).item() < probabilities[labels[i]].item():
+                    selected_indices.append(i)
+                if len(selected_indices) >= num_points:
+                    break
+        
+        selected_indices = torch.tensor(selected_indices)
+        sub_features = features[selected_indices]
+        sub_labels = labels[selected_indices]
+        remaining_indices = torch.ones(len(labels), dtype=torch.bool)
+        remaining_indices[selected_indices] = 0
+        remaining_features = features[remaining_indices]
+        remaining_labels = labels[remaining_indices]
+
+        return sub_features, sub_labels, remaining_features, remaining_labels
+
+    avg_points_per_client_train = len(train_labels) // client_number
+    avg_points_per_client_test = len(test_labels) // client_number
+
+    rearranged_data = []
+
+    remaining_train_features = train_features
+    remaining_train_labels = train_labels
+    remaining_test_features = test_features
+    remaining_test_labels = test_labels
+
+    for i in range(client_number):
+        
+        # For the last client, take all remaining data
+        if i == client_number - 1:
+
+            client_data = {
+                'train_features': remaining_train_features,
+                'train_labels': remaining_train_labels,
+                'test_features': remaining_test_features,
+                'test_labels': remaining_test_labels
+            } 
+            rearranged_data.append(client_data)
+            break
+
+        probabilities = calculate_probabilities(remaining_train_labels, np.random.uniform(scaling_label_low,scaling_label_high))
+
+        sub_train_features, sub_train_labels, remaining_train_features, remaining_train_labels = create_sub_dataset(
+            remaining_train_features, remaining_train_labels, probabilities, avg_points_per_client_train)
+        sub_test_features, sub_test_labels, remaining_test_features, remaining_test_labels = create_sub_dataset(
+            remaining_test_features, remaining_test_labels, probabilities, avg_points_per_client_test)
+        
+        if set_rotation:
+
+            len_train = len(sub_train_labels)
+            len_test = len(sub_test_labels)
+            total_rotations = assigning_rotation_features(
+                len_train + len_test, rotations, 
+                np.random.uniform(scaling_rotation_low,scaling_rotation_high), random_order
+                )
+            
+            print(dict(Counter(total_rotations))) if show_distribution else None
+
+            # Split the total_rotations list into train and test
+            train_rotations = total_rotations[:len_train]
+            test_rotations = total_rotations[len_train:]
+
+            sub_train_features = rotate_dataset(sub_train_features, train_rotations)
+            sub_test_features = rotate_dataset(sub_test_features, test_rotations)
+
+        if set_color:
+
+            len_train = len(sub_train_labels)
+            len_test = len(sub_test_labels)
+            total_colors = assigning_color_features(
+                len_train + len_test, colors, 
+                np.random.uniform(scaling_color_low,scaling_color_high), random_order
+                )
+            
+            print(dict(Counter(total_colors))) if show_distribution else None
+
+            # Split the total_colors list into train and test
+            train_colors = total_colors[:len_train]
+            test_colors = total_colors[len_train:]
+
+            sub_train_features = color_dataset(sub_train_features, train_colors)
+            sub_test_features = color_dataset(sub_test_features, test_colors)
+
+        client_data = {
+            'train_features': sub_train_features,
+            'train_labels': sub_train_labels,
+            'test_features': sub_test_features,
+            'test_labels': sub_test_labels
+        }
+        rearranged_data.append(client_data)
+
+    return rearranged_data
+
+
 
 
 
