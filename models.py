@@ -12,6 +12,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 from math import prod
+import utils
 
 
 #############################################################################################################
@@ -104,30 +105,10 @@ models = {
 # Helper functions 
 #############################################################################################################
 
-# define device
-def check_gpu(manual_seed=True, print_info=True):
-    if manual_seed:
-        torch.manual_seed(0)
-    if torch.cuda.is_available():
-        if print_info:
-            print("CUDA is available")
-        device = 'cuda'
-        torch.cuda.manual_seed_all(0) 
-    elif torch.backends.mps.is_available():
-        if print_info:
-            print("MPS is available")
-        device = torch.device("mps")
-        torch.mps.manual_seed(0)
-    else:
-        if print_info:
-            print("CUDA is not available")
-        device = 'cpu'
-    return device
-
-
 # simple train function
-def simple_train(model, device, train_loader, optimizer, epoch):
+def simple_train(model, device, train_loader, optimizer, epoch, client_id=None):
     model.train()
+    loss_list = []
     for batch_idx, (data, target) in enumerate(train_loader):
         data, target = data.to(device), target.to(device)
         optimizer.zero_grad()
@@ -135,9 +116,11 @@ def simple_train(model, device, train_loader, optimizer, epoch):
         loss = F.cross_entropy(output, target)
         loss.backward()
         optimizer.step()
-        if batch_idx % 100 == 0:
-            print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} '
-                  f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
+        # if batch_idx % 10 == 0:
+        #     print(f'Train Epoch: {epoch} [{batch_idx * len(data)}/{len(train_loader.dataset)} '
+        #           f'({100. * batch_idx / len(train_loader):.0f}%)]\tLoss: {loss.item():.6f}')
+        loss_list.append(loss.item())
+    # print(f'Client: {client_id} - Train Epoch: {epoch} \tLoss: {sum(loss_list)/len(loss_list):.6f}')
 
 
 # simple test function
@@ -154,8 +137,10 @@ def simple_test(model, device, test_loader):
             correct += pred.eq(target.view_as(pred)).sum().item()
 
     test_loss /= len(test_loader.dataset)
-    print(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} '
-          f'({100. * correct / len(test_loader.dataset):.0f}%)\n')
+    accuracy = correct / len(test_loader.dataset)
+    # print(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} '
+    #       f'({100. * correct / len(test_loader.dataset):.0f}%)\n')
+    return test_loss, accuracy
     
 
 # Dataset class
@@ -215,7 +200,7 @@ def main():
 
     print(f"\n\033[94mTraining {model_name} on {dataset_name} with {client_number} clients\033[0m\n")
 
-    device = check_gpu(manual_seed=True, print_info=True)
+    device = utils.check_gpu(manual_seed=True, print_info=True)
     torch.manual_seed(seed)
 
     # load data 
@@ -257,7 +242,7 @@ def main():
 
     for epoch in range(1, epochs + 1):
         simple_train(model, device, train_loader, optimizer, epoch)
-        simple_test(model, device, test_loader)
+        _, _ = simple_test(model, device, test_loader)
 
 if __name__ == '__main__':
     main()
