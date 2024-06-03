@@ -302,7 +302,7 @@ def split_unbalanced(
     permute: bool = True
 ) -> list:
     """
-    Splits a dataset into a specified number of clusters (clients).
+    Splits a dataset into a specified number of clusters unbalanced (clients).
     
     Args:
         features (torch.Tensor): The dataset features.
@@ -577,6 +577,10 @@ def split_label_skew(
         list: A list of dictionaries where each dictionary contains the features and labels for each client.
                 Both train and test.
     '''
+    # Ensure the features and labels have the same number of samples
+    assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
+    assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    assert scaling_label_high >= scaling_label_low, "High scaling must be larger than low scaling."
 
     def calculate_probabilities(labels, scaling):
         # Count the occurrences of each label
@@ -804,7 +808,116 @@ def split_feature_label_skew(
 
     return rearranged_data
 
+def split_feature_skew_unbalanced(
+    train_features: torch.Tensor,
+    train_labels: torch.Tensor,
+    test_features: torch.Tensor,
+    test_labels: torch.Tensor,
+    client_number: int = 10,
+    set_rotation: bool = False,
+    rotations: int = None,
+    scaling_rotation_low: float = 0.1,
+    scaling_rotation_high: float = 0.1,
+    set_color: bool = False,
+    colors: int = None,
+    scaling_color_low: float = 0.1,
+    scaling_color_high: float = 0.1,
+    random_order: bool = True,
+    std_dev: float = 0.1,
+    permute: bool = True,
+    show_distribution: bool = False
+) -> list:
+    """
+    Splits an overall dataset into a specified number of clusters unbalanced(clients) with feature skew.
 
+    Args:
+        train_features (torch.Tensor): The training dataset features.
+        train_labels (torch.Tensor): The training dataset labels.
+        test_features (torch.Tensor): The testing dataset features.
+        test_labels (torch.Tensor): The testing dataset labels.
+        client_number (int): The number of clients to split the data into.
+        set_rotation (bool): Whether to assign rotations to the features.
+        rotations (int): The number of possible rotations. Recommended to be [2,4].
+        scaling_rotation_low (float): The low bound scaling factor of rotation for the softmax distribution.
+        scaling_rotation_high (float): The high bound scaling factor of rotation for the softmax distribution.
+        set_color (bool): Whether to assign colors to the features.
+        colors (int): The number of colors to assign. Must be [2,3].
+        scaling_color_low (float): The low bound scaling factor of color for the softmax distribution.
+        scaling_color_high (float): The high bound scaling factor of color for the softmax distribution.
+        random_order (bool): Whether to shuffle the order of the rotations and colors.
+        std_dev (float): standard deviation of the normal distribution for the number of samples per client.
+        permute (bool): Whether to shuffle the data before splitting.
+        show_distribution (bool): Whether to print the distribution of the assigned features.
+        
+    Returns:
+        list: A list of dictionaries where each dictionary contains the features and labels for each client.
+                Both train and test.
+    """
+    # Ensure the features and labels have the same number of samples
+    assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
+    assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    assert scaling_color_high >= scaling_color_low, "High scaling must be larger than low scaling."
+    assert scaling_rotation_high >= scaling_rotation_low, "High scaling must be larger than low scaling."
+    assert std_dev > 0, "Standard deviation must be larger than 0."
+
+    # generate basic split unbalanced
+    basic_split_data_train = split_unbalanced(train_features, train_labels, client_number, std_dev, permute)
+    basic_split_data_test = split_unbalanced(test_features, test_labels, client_number, std_dev, permute)
+
+    # Process train and test splits with rotations if required
+    if set_rotation:
+        for client_data_train, client_data_test in zip(basic_split_data_train, basic_split_data_test):
+
+            len_train = len(client_data_train['labels'])
+            len_test = len(client_data_test['labels'])
+            total_rotations = assigning_rotation_features(
+                len_train + len_test, rotations, 
+                np.random.uniform(scaling_rotation_low,scaling_rotation_high), random_order
+                )
+            
+            print(dict(Counter(total_rotations))) if show_distribution else None
+
+            # Split the total_rotations list into train and test
+            train_rotations = total_rotations[:len_train]
+            test_rotations = total_rotations[len_train:]
+
+            client_data_train['features'] = rotate_dataset(client_data_train['features'], train_rotations)
+            client_data_test['features'] = rotate_dataset(client_data_test['features'], test_rotations)
+
+    if set_color:
+        for client_data_train, client_data_test in zip(basic_split_data_train, basic_split_data_test):
+
+            len_train = len(client_data_train['labels'])
+            len_test = len(client_data_test['labels'])
+            total_colors = assigning_color_features(
+                len_train + len_test, colors, 
+                np.random.uniform(scaling_color_low,scaling_color_high), random_order
+                )
+            
+            print(dict(Counter(total_colors))) if show_distribution else None
+
+            # Split the total_colors list into train and test
+            train_colors = total_colors[:len_train]
+            test_colors = total_colors[len_train:]
+
+            client_data_train['features'] = color_dataset(client_data_train['features'], train_colors)
+            client_data_test['features'] = color_dataset(client_data_test['features'], test_colors)
+
+    rearranged_data = []
+
+    # Iterate through the indices of the lists
+    for i in range(client_number):
+        # Create a new dictionary for each client
+        client_data = {
+            'train_features': basic_split_data_train[i]['features'],
+            'train_labels': basic_split_data_train[i]['labels'],
+            'test_features': basic_split_data_test[i]['features'],
+            'test_labels': basic_split_data_test[i]['labels']
+        }
+        # Append the new dictionary to the list
+        rearranged_data.append(client_data)
+            
+    return rearranged_data
 
 
 
