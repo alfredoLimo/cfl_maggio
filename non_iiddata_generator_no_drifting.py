@@ -919,5 +919,114 @@ def split_feature_skew_unbalanced(
             
     return rearranged_data
 
+def split_label_skew_unbalanced(
+    train_features: torch.Tensor,
+    train_labels: torch.Tensor, 
+    test_features: torch.Tensor,
+    test_labels: torch.Tensor, 
+    client_number: int = 10,
+    scaling_label_low: float = 0.4,
+    scaling_label_high: float = 0.6,
+    std_dev: float = 0.1,
+    verbose: bool = True
+) -> list:
+    """
+    Splits an overall dataset into a specified number of clusters unbalanced(clients) with label skew.
 
+    Args:
+        train_features (torch.Tensor): The training dataset features.
+        train_labels (torch.Tensor): The training dataset labels.
+        test_features (torch.Tensor): The testing dataset features.
+        test_labels (torch.Tensor): The testing dataset labels.
+        client_number (int): The number of clients to split the data into.
+        scaling_label_low (float): The low bound scaling factor of label for the softmax distribution.
+        scaling_label_high (float): The high bound scaling factor of label for the softmax distribution.
+        std_dev (float): standard deviation of the normal distribution for the number of samples per client.
+        verbose (bool): Whether to print the number of samples for each client.
+
+    Returns:
+        list: A list of dictionaries where each dictionary contains the features and labels for each client.
+                Both train and test.
+    """
+    assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
+    assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    assert std_dev > 0, "Standard deviation must be larger than 0."
+    assert scaling_label_high >= scaling_label_low, "High scaling must be larger than low scaling."
+
+    def calculate_probabilities(labels, scaling):
+        # Count the occurrences of each label
+        label_counts = torch.bincount(labels, minlength=10).float()
+        scaled_counts = label_counts ** scaling
+        
+        # Apply softmax to get probabilities
+        probabilities = F.softmax(scaled_counts, dim=0)
+        
+        return probabilities
+
+    def create_sub_dataset(features, labels, probabilities, num_points):
+        selected_indices = []
+        while len(selected_indices) < num_points:
+            for i in range(len(labels)):
+                if torch.rand(1).item() < probabilities[labels[i]].item():
+                    selected_indices.append(i)
+                if len(selected_indices) >= num_points:
+                    break
+        
+        selected_indices = torch.tensor(selected_indices)
+        sub_features = features[selected_indices]
+        sub_labels = labels[selected_indices]
+        remaining_indices = torch.ones(len(labels), dtype=torch.bool)
+        remaining_indices[selected_indices] = 0
+        remaining_features = features[remaining_indices]
+        remaining_labels = labels[remaining_indices]
+
+        return sub_features, sub_labels, remaining_features, remaining_labels
+
+    # Generate different number of samples for each client
+    def generate_samples_per_client(features, client_number, std_dev):
+        total_samples = len(features)
+        percentage = truncnorm.rvs(-0.5/std_dev, 0.5/std_dev, loc=0.5, scale=std_dev, size=client_number)
+        normalized_percentage = percentage / np.sum(percentage)
+        samples_per_client = (normalized_percentage * total_samples).astype(int)
+        return samples_per_client
+
+    train_samples_per_client = generate_samples_per_client(train_features, client_number, std_dev)
+    test_samples_per_client = generate_samples_per_client(test_features, client_number, std_dev)
+
+    rearranged_data = []
+
+    remaining_train_features = train_features
+    remaining_train_labels = train_labels
+    remaining_test_features = test_features
+    remaining_test_labels = test_labels
+
+    for i in range(client_number):
+        print(f'Client {i+1} - Train: {train_samples_per_client[i]} Test: {test_samples_per_client[i]}') if verbose else None
+
+        if i == client_number - 1:
+            client_data = {
+                'train_features': remaining_train_features,
+                'train_labels': remaining_train_labels,
+                'test_features': remaining_test_features,
+                'test_labels': remaining_test_labels
+            } 
+            rearranged_data.append(client_data)
+            break
+
+        probabilities = calculate_probabilities(remaining_train_labels, np.random.uniform(scaling_label_low,scaling_label_high))
+
+        sub_train_features, sub_train_labels, remaining_train_features, remaining_train_labels = create_sub_dataset(
+            remaining_train_features, remaining_train_labels, probabilities, train_samples_per_client[i])
+        sub_test_features, sub_test_labels, remaining_test_features, remaining_test_labels = create_sub_dataset(
+            remaining_test_features, remaining_test_labels, probabilities, test_samples_per_client[i])
+        
+        client_data = {
+            'train_features': sub_train_features,
+            'train_labels': sub_train_labels,
+            'test_features': sub_test_features,
+            'test_labels': sub_test_labels
+        }        
+        rearranged_data.append(client_data)
+
+    return rearranged_data
 
