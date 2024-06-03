@@ -617,8 +617,9 @@ def split_label_skew(
 
     return rearranged_data
 
-
-def merge_data(data: list) -> list: 
+def merge_data(
+    data: list
+) -> list:
     '''
     Merges the data from multiple clients into a single dataset.
 
