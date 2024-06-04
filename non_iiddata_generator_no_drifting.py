@@ -1110,3 +1110,88 @@ def split_feature_condition_skew(
         rearranged_data.append(client_data)
     
     return rearranged_data
+
+def split_feature_condition_skew_unbalanced(
+    train_features: torch.Tensor,
+    train_labels: torch.Tensor,
+    test_features: torch.Tensor,
+    test_labels: torch.Tensor,
+    client_number: int = 10,
+    random_mode: bool = True,
+    mixing_label_number: int = None,
+    mixing_label_list: list = None,
+    std_dev: float = 0.1,
+    permute: bool = True,
+    verbose: bool = False
+) -> list:
+    """
+    P(x|y) differs across clients by label swapping.
+
+    Random mode: randomly choose which labels are in the swapping pool. (#mixing_label_number)
+    Non-random mode: a list of labels are provided to be swapped.
+
+    Warning:
+        The re-mapping possibility of labels are growing with the swapping pool.
+        E.g. When the swapping pool has [1,2,3]. Label '3' could be swapped with both '1' or '2'.
+
+        mixing_label_list only takes the numbers FROM 1, as from the datasets.
+    
+    Args:
+        train_features (torch.Tensor): The training dataset features.
+        train_labels (torch.Tensor): The training dataset labels.
+        test_features (torch.Tensor): The testing dataset features.
+        test_labels (torch.Tensor): The testing dataset labels.
+        client_number (int): The number of clients to split the data into.
+        random_mode (bool): Random mode.
+        mixing_label_number (int): The number of labels to swap in Random mode.
+        mixing_label_list (list): A list of labels to swap in Non-random mode.
+        std_dev (float): standard deviation of the normal distribution for the number of samples per client.
+        permute (bool): Whether to shuffle the data before splitting.
+
+    Returns:
+        list: A list of dictionaries where each dictionary contains the features and labels for each client.
+                Both train and test.
+    """
+    assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
+    assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    max_label = max(torch.unique(train_labels).size(0), torch.unique(test_labels).size(0))
+
+    if random_mode:
+        assert mixing_label_number > 0, "The number of labels to swap must be larger than 0."
+        mixing_label_list = np.random.choice(range(1, max_label+1), mixing_label_number,replace=False).tolist()
+    else:
+        assert mixing_label_list is not None, "The list of labels to swap must be provided."
+        assert len(mixing_label_list) == len(set(mixing_label_list)), "Repeated list."
+        assert all(0 < label <= max_label for label in mixing_label_list), "Label out of range."
+    assert std_dev > 0, "Standard deviation must be larger than 0."
+
+    # generate basic split unbalanced
+    basic_split_data_train = split_unbalanced(train_features, train_labels, client_number, std_dev, permute)
+    basic_split_data_test = split_unbalanced(test_features, test_labels, client_number, std_dev, permute)
+
+    rearranged_data = []
+    for i in range(client_number):
+
+        # Mapping from original label to the permuted label
+        permuted_label_list = mixing_label_list.copy()
+        np.random.shuffle(permuted_label_list)
+        label_map = {original: permuted for original, permuted in zip(mixing_label_list, permuted_label_list)}
+
+        print(f'Client {i+1} - Label Mapping: {label_map}') if verbose else None
+
+        new_train_labels = basic_split_data_train[i]['labels'].clone()
+        new_test_labels = basic_split_data_test[i]['labels'].clone()
+        for original, permuted in label_map.items():
+            new_train_labels[basic_split_data_train[i]['labels'] == original] = permuted
+            new_test_labels[basic_split_data_test[i]['labels'] == original] = permuted
+
+        client_data = {
+            'train_features': basic_split_data_train[i]['features'],
+            'train_labels': new_train_labels,
+            'test_features': basic_split_data_test[i]['features'],
+            'test_labels': new_test_labels
+        }
+        # Append the new dictionary to the list
+        rearranged_data.append(client_data)
+    
+    return rearranged_data
