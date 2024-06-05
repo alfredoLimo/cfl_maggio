@@ -1030,7 +1030,6 @@ def split_label_skew_unbalanced(
 
     return rearranged_data
 
-
 def split_feature_condition_skew(
     train_features: torch.Tensor,
     train_labels: torch.Tensor,
@@ -1040,6 +1039,8 @@ def split_feature_condition_skew(
     random_mode: bool = True,
     mixing_label_number: int = None,
     mixing_label_list: list = None,
+    scaling_label_low: float = 0.0,
+    scaling_label_high: float = 0.0,
     verbose: bool = False
 ) -> list:
     """
@@ -1047,6 +1048,8 @@ def split_feature_condition_skew(
 
     Random mode: randomly choose which labels are in the swapping pool. (#mixing_label_number)
     Non-random mode: a list of labels are provided to be swapped.
+
+    A scaling factor is randomly generated. When 1, dirichlet shuffling, when 0, no shuffling.
 
     Warning:
         The re-mapping possibility of labels are growing with the swapping pool.
@@ -1063,6 +1066,8 @@ def split_feature_condition_skew(
         random_mode (bool): Random mode.
         mixing_label_number (int): The number of labels to swap in Random mode.
         mixing_label_list (list): A list of labels to swap in Non-random mode.
+        scaling_label_low (float): The low bound scaling factor of label skewing.
+        scaling_label_high (float): The high bound scaling factor of label skewing.
 
     Returns:
         list: A list of dictionaries where each dictionary contains the features and labels for each client.
@@ -1070,6 +1075,7 @@ def split_feature_condition_skew(
     """
     assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
     assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    assert scaling_label_high >= scaling_label_low, "High scaling must be larger than low scaling."
     max_label = max(torch.unique(train_labels).size(0), torch.unique(test_labels).size(0))
 
     if random_mode:
@@ -1087,6 +1093,8 @@ def split_feature_condition_skew(
     rearranged_data = []
     for i in range(client_number):
 
+        scaling_label = np.random.uniform(scaling_label_low, scaling_label_high)
+
         # Mapping from original label to the permuted label
         permuted_label_list = mixing_label_list.copy()
         np.random.shuffle(permuted_label_list)
@@ -1096,9 +1104,17 @@ def split_feature_condition_skew(
 
         new_train_labels = basic_split_data_train[i]['labels'].clone()
         new_test_labels = basic_split_data_test[i]['labels'].clone()
+        
         for original, permuted in label_map.items():
-            new_train_labels[basic_split_data_train[i]['labels'] == original] = permuted
-            new_test_labels[basic_split_data_test[i]['labels'] == original] = permuted
+            # Replace labels based on the scaling_label probability
+            train_mask = (basic_split_data_train[i]['labels'] == original)
+            test_mask = (basic_split_data_test[i]['labels'] == original)
+            
+            random_values_train = torch.rand(train_mask.sum().item())
+            random_values_test = torch.rand(test_mask.sum().item())
+            
+            new_train_labels[train_mask] = torch.where(random_values_train <= scaling_label, permuted, original)
+            new_test_labels[test_mask] = torch.where(random_values_test <= scaling_label, permuted, original)
 
         client_data = {
             'train_features': basic_split_data_train[i]['features'],
@@ -1120,6 +1136,8 @@ def split_feature_condition_skew_unbalanced(
     random_mode: bool = True,
     mixing_label_number: int = None,
     mixing_label_list: list = None,
+    scaling_label_low: float = 0.0,
+    scaling_label_high: float = 0.0,
     std_dev: float = 0.1,
     permute: bool = True,
     verbose: bool = False
@@ -1145,6 +1163,8 @@ def split_feature_condition_skew_unbalanced(
         random_mode (bool): Random mode.
         mixing_label_number (int): The number of labels to swap in Random mode.
         mixing_label_list (list): A list of labels to swap in Non-random mode.
+        scaling_label_low (float): The low bound scaling factor of label skewing.
+        scaling_label_high (float): The high bound scaling factor of label skewing.
         std_dev (float): standard deviation of the normal distribution for the number of samples per client.
         permute (bool): Whether to shuffle the data before splitting.
 
@@ -1172,6 +1192,8 @@ def split_feature_condition_skew_unbalanced(
     rearranged_data = []
     for i in range(client_number):
 
+        scaling_label = np.random.uniform(scaling_label_low, scaling_label_high)
+
         # Mapping from original label to the permuted label
         permuted_label_list = mixing_label_list.copy()
         np.random.shuffle(permuted_label_list)
@@ -1181,9 +1203,17 @@ def split_feature_condition_skew_unbalanced(
 
         new_train_labels = basic_split_data_train[i]['labels'].clone()
         new_test_labels = basic_split_data_test[i]['labels'].clone()
+        
         for original, permuted in label_map.items():
-            new_train_labels[basic_split_data_train[i]['labels'] == original] = permuted
-            new_test_labels[basic_split_data_test[i]['labels'] == original] = permuted
+            # Replace labels based on the scaling_label probability
+            train_mask = (basic_split_data_train[i]['labels'] == original)
+            test_mask = (basic_split_data_test[i]['labels'] == original)
+            
+            random_values_train = torch.rand(train_mask.sum().item())
+            random_values_test = torch.rand(test_mask.sum().item())
+            
+            new_train_labels[train_mask] = torch.where(random_values_train <= scaling_label, permuted, original)
+            new_test_labels[test_mask] = torch.where(random_values_test <= scaling_label, permuted, original)
 
         client_data = {
             'train_features': basic_split_data_train[i]['features'],
