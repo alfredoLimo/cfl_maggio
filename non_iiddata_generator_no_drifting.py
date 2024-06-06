@@ -1632,3 +1632,175 @@ def split_feature_condition_skew_with_label_skew(
         rearranged_data.append(client_data)
 
     return rearranged_data
+
+def split_label_condition_skew_with_label_skew(
+    train_features: torch.Tensor,
+    train_labels: torch.Tensor, 
+    test_features: torch.Tensor,
+    test_labels: torch.Tensor, 
+    client_number: int = 10,
+    scaling_label_low: float = 0.4,
+    scaling_label_high: float = 0.6,
+    set_rotation: bool = False,
+    rotations: int = 2,
+    set_color: bool = False,
+    colors: int = 3,
+    random_mode: bool = True,
+    rotated_label_number: int = 2,
+    colored_label_number: int = 2,
+    rotated_label_list: list = None,
+    colored_label_list: list = None,
+    verbose: bool = False
+) -> list:
+    '''
+    P(y|x) differs across clients by targeted rotation/coloring while clients already label skewed.
+
+    Random mode: randomly choose which labels are to be rotated/colored. (#rotated_label_number/#colored_label_number)
+    Non-random mode: a list of labels are provided to be rotated/colored.
+
+    Scaling is not yet supported. Didn't see much point of that.
+    
+    Args:
+        train_features (torch.Tensor): The training dataset features.
+        train_labels (torch.Tensor): The training dataset labels.
+        test_features (torch.Tensor): The testing dataset features.
+        test_labels (torch.Tensor): The testing dataset labels.
+        client_number (int): The number of clients to split the data into.
+        scaling_label_low (float): The low bound scaling factor of label for the softmax distribution.
+        scaling_label_high (float): The high bound scaling factor of label for the softmax distribution.
+        set_rotation (bool): Whether to assign rotations to the features.
+        rotations (int): The number of possible rotations. Recommended to be [2,4].
+        set_color (bool): Whether to assign colors to the features.
+        colors (int): The number of colors to assign. Must be [1,2,3].
+        random_mode (bool): Random mode.
+        rotated_label_number (int): The number of labels to rotate in Random mode.
+        colored_label_number (int): The number of labels to color in Random mode.
+        rotated_label_list (list): A list of labels to rotate in Non-random mode.
+        colored_label_list (list): A list of labels to color in Non-random mode.
+        verbose (bool): Whether to print the number of samples for each client.
+
+    Returns:
+        list: A list of dictionaries where each dictionary contains the features and labels for each client.
+                Both train and test.
+    '''
+    assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
+    assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    assert scaling_label_high >= scaling_label_low, "High scaling must be larger than low scaling."
+    assert rotations > 1, "Must have at least 2 rotations. Otherwise turn it off."
+    assert colors == 1 or colors == 2 or colors == 3, "The number of colors must be 1, 2, or 3."
+    max_label = max(torch.unique(train_labels).size(0), torch.unique(test_labels).size(0))
+
+    if random_mode:
+        assert rotated_label_number is not None or colored_label_number is not None, "The number of labels to rotate/color must be provided."
+        rotated_label_list = np.random.choice(range(0, max_label), rotated_label_number,replace=False).tolist()
+        colored_label_list = np.random.choice(range(0, max_label), colored_label_number,replace=False).tolist()
+    else:
+        assert rotated_label_list is not None or colored_label_list is not None, "The list of labels to rotate/color must be provided."
+        assert len(rotated_label_list) == len(set(rotated_label_list)), "Repeated list."
+        assert len(colored_label_list) == len(set(colored_label_list)), "Repeated list."
+        assert all(0 <= label <= max_label for label in rotated_label_list), "Label out of range."
+        assert all(0 <= label <= max_label for label in colored_label_list), "Label out of range."
+
+    def calculate_probabilities(labels, scaling):
+        # Count the occurrences of each label
+        label_counts = torch.bincount(labels, minlength=10).float()
+        scaled_counts = label_counts ** scaling
+        
+        # Apply softmax to get probabilities
+        probabilities = F.softmax(scaled_counts, dim=0)
+        
+        return probabilities
+
+    def create_sub_dataset(features, labels, probabilities, num_points):
+        selected_indices = []
+        while len(selected_indices) < num_points:
+            for i in range(len(labels)):
+                if torch.rand(1).item() < probabilities[labels[i]].item():
+                    selected_indices.append(i)
+                if len(selected_indices) >= num_points:
+                    break
+        
+        selected_indices = torch.tensor(selected_indices)
+        sub_features = features[selected_indices]
+        sub_labels = labels[selected_indices]
+        remaining_indices = torch.ones(len(labels), dtype=torch.bool)
+        remaining_indices[selected_indices] = 0
+        remaining_features = features[remaining_indices]
+        remaining_labels = labels[remaining_indices]
+
+        return sub_features, sub_labels, remaining_features, remaining_labels
+
+    avg_points_per_client_train = len(train_labels) // client_number
+    avg_points_per_client_test = len(test_labels) // client_number
+
+    rearranged_data = []
+
+    remaining_train_features = train_features
+    remaining_train_labels = train_labels
+    remaining_test_features = test_features
+    remaining_test_labels = test_labels
+
+    if colors == 1:
+        letters = ['red']
+    elif colors == 2:
+        letters = ['red', 'blue']
+    else:
+        letters = ['red', 'blue', 'green']
+
+    for i in range(client_number):
+        
+        # For the last client, take all remaining data
+        if i == client_number - 1:
+
+            client_data = {
+                'train_features': remaining_train_features,
+                'train_labels': remaining_train_labels,
+                'test_features': remaining_test_features,
+                'test_labels': remaining_test_labels
+            } 
+            rearranged_data.append(client_data)
+            break
+
+        probabilities = calculate_probabilities(remaining_train_labels, np.random.uniform(scaling_label_low,scaling_label_high))
+
+        sub_train_features, sub_train_labels, remaining_train_features, remaining_train_labels = create_sub_dataset(
+            remaining_train_features, remaining_train_labels, probabilities, avg_points_per_client_train)
+        sub_test_features, sub_test_labels, remaining_test_features, remaining_test_labels = create_sub_dataset(
+            remaining_test_features, remaining_test_labels, probabilities, avg_points_per_client_test)
+        
+
+        if set_rotation:
+            angles = [i * 360 / rotations for i in range(rotations)]
+
+            rotation_mapping = {label: np.random.choice(angles) if label in rotated_label_list else 0.0
+                                for label in np.arange(0, max_label+1).tolist()}
+            
+            print(f'Rotation Mapping: {rotation_mapping}') if verbose else None
+
+            train_rotations = [rotation_mapping[label.item()] for label in sub_train_labels]
+            test_rotations = [rotation_mapping[label.item()] for label in sub_test_labels]
+
+            sub_train_features = rotate_dataset(sub_train_features, train_rotations)
+            sub_test_features = rotate_dataset(sub_test_features, test_rotations)
+        
+        if set_color:
+            color_mapping = {label: np.random.choice(letters) if label in colored_label_list else "gray"
+                                for label in np.arange(0, max_label+1).tolist()}
+            
+            print(f'Color Mapping: {color_mapping}') if verbose else None
+
+            train_colors = [color_mapping[label.item()] for label in sub_train_labels]
+            test_colors = [color_mapping[label.item()] for label in sub_test_labels]
+
+            sub_train_features = color_dataset(sub_train_features, train_colors)
+            sub_test_features = color_dataset(sub_test_features, test_colors)
+        
+        client_data = {
+            'train_features': sub_train_features,
+            'train_labels': sub_train_labels,
+            'test_features': sub_test_features,
+            'test_labels': sub_test_labels
+        }        
+        rearranged_data.append(client_data)
+
+    return rearranged_data
