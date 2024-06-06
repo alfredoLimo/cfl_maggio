@@ -1473,3 +1473,162 @@ def split_label_condition_skew_unbalanced(
         rearranged_data.append(client_data)
             
     return rearranged_data
+
+def split_feature_condition_skew_with_label_skew(
+    train_features: torch.Tensor,
+    train_labels: torch.Tensor, 
+    test_features: torch.Tensor,
+    test_labels: torch.Tensor, 
+    client_number: int = 10,
+    scaling_label_low: float = 0.4,
+    scaling_label_high: float = 0.6,
+    random_mode: bool = True,
+    mixing_label_number: int = None,
+    mixing_label_list: list = None,
+    scaling_swapping_low: float = 0.0,
+    scaling_swapping_high: float = 0.0,
+    verbose: bool = False
+) -> list:
+    '''
+    P(x|y) differs across clients by label swapping while clients already label skewed.
+
+    Random mode: randomly choose which labels are in the swapping pool. (#mixing_label_number)
+    Non-random mode: a list of labels are provided to be swapped.
+
+    A scaling factor is randomly generated. When 1, dirichlet shuffling, when 0, no shuffling.
+
+    Warning:
+        The re-mapping possibility of labels are growing with the swapping pool.
+        E.g. When the swapping pool has [1,2,3]. Label '3' could be swapped with both '1' or '2'.
+
+        USE Non-random mode for EMNIST, which is the only dataset doesn't start label from 0.
+
+    Args:
+        train_features (torch.Tensor): The training dataset features.
+        train_labels (torch.Tensor): The training dataset labels.
+        test_features (torch.Tensor): The testing dataset features.
+        test_labels (torch.Tensor): The testing dataset labels.
+        client_number (int): The number of clients to split the data into.
+        scaling_label_low (float): The low bound scaling factor of label for the softmax distribution.
+        scaling_label_high (float): The high bound scaling factor of label for the softmax distribution.
+        random_mode (bool): Random mode.
+        mixing_label_number (int): The number of labels to swap in Random mode.
+        mixing_label_list (list): A list of labels to swap in Non-random mode.
+        scaling_swapping_low (float): The low bound scaling factor of label skewing.
+        scaling_swapping_high (float): The high bound scaling factor of label skewing.
+        verbose (bool): Whether to print the number of samples for each client.
+
+    Returns:
+        list: A list of dictionaries where each dictionary contains the features and labels for each client.
+                Both train and test.
+    
+    '''
+    assert len(train_features) == len(train_labels), "The number of samples in features and labels must be the same."
+    assert len(test_features) == len(test_labels), "The number of samples in features and labels must be the same."
+    assert scaling_label_high >= scaling_label_low, "High scaling must be larger than low scaling."
+    assert scaling_swapping_high >= scaling_swapping_low, "High scaling must be larger than low scaling."
+    max_label = max(torch.unique(train_labels).size(0), torch.unique(test_labels).size(0))
+
+    if random_mode:
+        assert mixing_label_number > 0, "The number of labels to swap must be larger than 0."
+        mixing_label_list = np.random.choice(range(0, max_label), mixing_label_number,replace=False).tolist()
+    else:
+        assert mixing_label_list is not None, "The list of labels to swap must be provided."
+        assert len(mixing_label_list) == len(set(mixing_label_list)), "Repeated list."
+        assert all(0 <= label <= max_label for label in mixing_label_list), "Label out of range."
+    
+
+    def calculate_probabilities(labels, scaling):
+        # Count the occurrences of each label
+        label_counts = torch.bincount(labels, minlength=10).float()
+        scaled_counts = label_counts ** scaling
+        
+        # Apply softmax to get probabilities
+        probabilities = F.softmax(scaled_counts, dim=0)
+        
+        return probabilities
+
+    def create_sub_dataset(features, labels, probabilities, num_points):
+        selected_indices = []
+        while len(selected_indices) < num_points:
+            for i in range(len(labels)):
+                if torch.rand(1).item() < probabilities[labels[i]].item():
+                    selected_indices.append(i)
+                if len(selected_indices) >= num_points:
+                    break
+        
+        selected_indices = torch.tensor(selected_indices)
+        sub_features = features[selected_indices]
+        sub_labels = labels[selected_indices]
+        remaining_indices = torch.ones(len(labels), dtype=torch.bool)
+        remaining_indices[selected_indices] = 0
+        remaining_features = features[remaining_indices]
+        remaining_labels = labels[remaining_indices]
+
+        return sub_features, sub_labels, remaining_features, remaining_labels
+
+    avg_points_per_client_train = len(train_labels) // client_number
+    avg_points_per_client_test = len(test_labels) // client_number
+
+    rearranged_data = []
+
+    remaining_train_features = train_features
+    remaining_train_labels = train_labels
+    remaining_test_features = test_features
+    remaining_test_labels = test_labels
+
+    for i in range(client_number):
+        
+        # For the last client, take all remaining data
+        if i == client_number - 1:
+
+            client_data = {
+                'train_features': remaining_train_features,
+                'train_labels': remaining_train_labels,
+                'test_features': remaining_test_features,
+                'test_labels': remaining_test_labels
+            } 
+            rearranged_data.append(client_data)
+            break
+
+        probabilities = calculate_probabilities(remaining_train_labels, np.random.uniform(scaling_label_low,scaling_label_high))
+
+        sub_train_features, sub_train_labels, remaining_train_features, remaining_train_labels = create_sub_dataset(
+            remaining_train_features, remaining_train_labels, probabilities, avg_points_per_client_train)
+        sub_test_features, sub_test_labels, remaining_test_features, remaining_test_labels = create_sub_dataset(
+            remaining_test_features, remaining_test_labels, probabilities, avg_points_per_client_test)
+        
+        # feature condition skew
+
+        scaling_swapping = np.random.uniform(scaling_swapping_low, scaling_swapping_high)
+
+        # Mapping from original label to the permuted label
+        permuted_label_list = mixing_label_list.copy()
+        np.random.shuffle(permuted_label_list)
+        label_map = {original: permuted for original, permuted in zip(mixing_label_list, permuted_label_list)}
+
+        print(f'Client {i+1} - Label Mapping: {label_map}') if verbose else None
+
+        new_train_labels = sub_train_labels.clone()
+        new_test_labels = sub_test_labels.clone()
+
+        for original, permuted in label_map.items():
+            # Replace labels based on the scaling_label probability
+            train_mask = (sub_train_labels == original)
+            test_mask = (sub_test_labels == original)
+            
+            random_values_train = torch.rand(train_mask.sum().item())
+            random_values_test = torch.rand(test_mask.sum().item())
+            
+            new_train_labels[train_mask] = torch.where(random_values_train <= scaling_swapping, permuted, original)
+            new_test_labels[test_mask] = torch.where(random_values_test <= scaling_swapping, permuted, original)
+
+        client_data = {
+            'train_features': sub_train_features,
+            'train_labels': new_train_labels,
+            'test_features': sub_test_features,
+            'test_labels': new_test_labels
+        }        
+        rearranged_data.append(client_data)
+
+    return rearranged_data
